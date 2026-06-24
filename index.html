@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Find My Laptop</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #f0f2f5; margin: 0; }
+        .container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 100%; }
+        h1 { color: #333; }
+        .icon { font-size: 48px; margin-bottom: 10px; }
+        button { background-color: #e74c3c; color: white; border: none; padding: 15px 32px; font-size: 20px; border-radius: 8px; cursor: pointer; transition: background 0.3s, transform 0.1s; margin-top: 20px; width: 100%; font-weight: bold; }
+        button:hover { background-color: #c0392b; }
+        button:active { transform: scale(0.98); }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        #status { margin-top: 15px; font-weight: bold; color: #7f8c8d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">💻🔊</div>
+        <h1>Find My Laptop</h1>
+        <p>Click the button below to sound the alarm on your laptop.</p>
+        <button id="ringBtn" disabled>Ring Laptop</button>
+        <div id="status">Connecting to broker...</div>
+    </div>
+
+    <script>
+        // Connect via WebSocket to the public broker
+        const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+        const topic = 'findmylaptop/jicam/command';
+        
+        const client = mqtt.connect(brokerUrl);
+        const statusEl = document.getElementById('status');
+        const btn = document.getElementById('ringBtn');
+
+        client.on('connect', function () {
+            statusEl.innerText = 'Connected! Ready to ring.';
+            statusEl.style.color = '#27ae60';
+            btn.disabled = false;
+        });
+
+        client.on('error', function (err) {
+            statusEl.innerText = 'Connection error.';
+            statusEl.style.color = '#e74c3c';
+        });
+
+        btn.addEventListener('click', () => {
+            if (client.connected) {
+                // Publish the "ring" command to the topic
+                client.publish(topic, 'ring');
+                
+                statusEl.innerText = 'Command sent! Laptop should be ringing.';
+                statusEl.style.color = '#f39c12';
+                
+                btn.disabled = true;
+                setTimeout(() => {
+                    statusEl.innerText = 'Connected! Ready to ring.';
+                    statusEl.style.color = '#27ae60';
+                    btn.disabled = false;
+                }, 3000); // Prevent spamming
+            }
+        });
+    </script>
+</body>
+</html>
