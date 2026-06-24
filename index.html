@@ -96,6 +96,8 @@
             }
         });
 
+        let volTimeout;
+
         // Send volume command when slider value is released
         volSlider.addEventListener('change', (e) => {
             if (client.connected) {
@@ -106,9 +108,19 @@
             }
         });
 
-        // Update the label visually while dragging
+        // Update the label visually while dragging and publish with throttle
         volSlider.addEventListener('input', (e) => {
-            volValue.innerText = e.target.value;
+            const vol = e.target.value;
+            volValue.innerText = vol;
+            
+            if (client.connected) {
+                clearTimeout(volTimeout);
+                volTimeout = setTimeout(() => {
+                    client.publish(topic, 'vol:' + vol);
+                    statusEl.innerText = 'Volume set to ' + vol + '%';
+                    statusEl.style.color = '#2980b9';
+                }, 150); // 150ms throttle
+            }
         });
     </script>
 </body>

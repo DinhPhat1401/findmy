@@ -126,8 +126,18 @@ def start_mqtt():
     except Exception as e:
         print(f"MQTT Error: {e}")
 
+def prevent_sleep():
+    try:
+        # ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 0x00000001
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        print("Preventing system from idle sleep...")
+    except Exception as e:
+        print(f"Could not prevent sleep: {e}")
+
 def main():
     print("--- FIND MY LAPTOP (Web Controller Mode) ---")
+    prevent_sleep()
     # Start MQTT in a background thread
     mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
     mqtt_thread.start()
@@ -138,6 +148,12 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("Shutting down...")
+        # Restore normal sleep behavior
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
