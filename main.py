@@ -4,14 +4,14 @@ import time
 import threading
 import logging
 import math
-import io
+import os
 import wave
 import struct
 
 # Audio volume imports
 try:
     from ctypes import cast, POINTER
-    from comtypes import CLSCTX_ALL
+    from comtypes import CLSCTX_ALL, CoInitialize, CoUninitialize
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
     PYCAW_AVAILABLE = True
 except ImportError:
@@ -25,9 +25,10 @@ MQTT_PORT = 1883
 TOPIC = "findmylaptop/jicam/command"
 
 timer_thread = None
+ALARM_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alarm.wav")
 
-# Hàm tạo một file âm thanh WAV cảnh báo (Lưu trực tiếp trong RAM)
-# Giải quyết vấn đề winsound.Beep không bị ảnh hưởng bởi Âm lượng hệ thống
+# Hàm tạo một file âm thanh WAV cảnh báo và lưu ra ổ đĩa
+# Giải quyết lỗi "Cannot play asynchronously from memory" của thư viện winsound
 def generate_alarm_wav():
     framerate = 44100
     duration = 1.0 # 1 giây cho 1 chu kỳ
@@ -35,9 +36,6 @@ def generate_alarm_wav():
     
     audio_data = bytearray()
     for i in range(num_samples):
-        # 0.25s đầu: Âm tần 2000Hz (Bíp thấp)
-        # 0.25s sau: Âm tần 2500Hz (Bíp cao)
-        # 0.5s cuối: Im lặng
         if i < 11025:
             value = int(32767.0 * math.sin(2.0 * math.pi * 2000.0 * i / framerate))
         elif i < 22050:
@@ -46,31 +44,31 @@ def generate_alarm_wav():
             value = 0
         audio_data += struct.pack('<h', value)
         
-    wav_io = io.BytesIO()
-    with wave.open(wav_io, 'wb') as wav_file:
+    with wave.open(ALARM_FILE, 'wb') as wav_file:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2) # 16-bit
         wav_file.setframerate(framerate)
         wav_file.writeframes(audio_data)
-        
-    return wav_io.getvalue()
 
-print("Đang tạo bộ nhớ đệm âm thanh cảnh báo...")
-ALARM_WAV_DATA = generate_alarm_wav()
+print("Đang tạo file âm thanh cảnh báo...")
+generate_alarm_wav()
 
 def set_volume(level_percent):
     if not PYCAW_AVAILABLE:
         return
     try:
+        # MQTT gọi hàm này từ một luồng (thread) khác, nên ta phải khởi tạo COM thread
+        CoInitialize()
         devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = cast(interface, POINTER(IAudioEndpointVolume))
+        interface = devices.EndpointVolume
         # Chỉnh âm lượng tổng (Master Volume)
         vol_scalar = max(0.0, min(1.0, level_percent / 100.0))
-        volume.SetMasterVolumeLevelScalar(vol_scalar, None)
+        interface.SetMasterVolumeLevelScalar(vol_scalar, None)
         print(f"System volume set to {level_percent}%")
     except Exception as e:
         print(f"Failed to set volume: {e}")
+    finally:
+        CoUninitialize()
 
 def stop_alarm():
     global timer_thread
@@ -87,8 +85,8 @@ def trigger_alarm():
     # Dừng âm thanh cũ (nếu có)
     stop_alarm()
     
-    # Phát file WAV trong RAM lặp đi lặp lại một cách không đồng bộ (Bắt buộc dùng SND_ASYNC)
-    winsound.PlaySound(ALARM_WAV_DATA, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_LOOP)
+    # Phát file WAV trên đĩa cứng lặp đi lặp lại một cách không đồng bộ
+    winsound.PlaySound(ALARM_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
     
     # Hẹn giờ tự tắt sau 5 phút (300 giây) để tránh tốn pin nếu người dùng quên tắt
     timer_thread = threading.Timer(300, stop_alarm)
