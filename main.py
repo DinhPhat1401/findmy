@@ -3,6 +3,10 @@ import winsound
 import time
 import threading
 import logging
+import math
+import io
+import wave
+import struct
 
 # Audio volume imports
 try:
@@ -20,9 +24,39 @@ MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
 TOPIC = "findmylaptop/jicam/command"
 
-# Global event to stop the alarm
-stop_event = threading.Event()
-alarm_thread = None
+timer_thread = None
+
+# Hàm tạo một file âm thanh WAV cảnh báo (Lưu trực tiếp trong RAM)
+# Giải quyết vấn đề winsound.Beep không bị ảnh hưởng bởi Âm lượng hệ thống
+def generate_alarm_wav():
+    framerate = 44100
+    duration = 1.0 # 1 giây cho 1 chu kỳ
+    num_samples = int(framerate * duration)
+    
+    audio_data = bytearray()
+    for i in range(num_samples):
+        # 0.25s đầu: Âm tần 2000Hz (Bíp thấp)
+        # 0.25s sau: Âm tần 2500Hz (Bíp cao)
+        # 0.5s cuối: Im lặng
+        if i < 11025:
+            value = int(32767.0 * math.sin(2.0 * math.pi * 2000.0 * i / framerate))
+        elif i < 22050:
+            value = int(32767.0 * math.sin(2.0 * math.pi * 2500.0 * i / framerate))
+        else:
+            value = 0
+        audio_data += struct.pack('<h', value)
+        
+    wav_io = io.BytesIO()
+    with wave.open(wav_io, 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2) # 16-bit
+        wav_file.setframerate(framerate)
+        wav_file.writeframes(audio_data)
+        
+    return wav_io.getvalue()
+
+print("Đang tạo bộ nhớ đệm âm thanh cảnh báo...")
+ALARM_WAV_DATA = generate_alarm_wav()
 
 def set_volume(level_percent):
     if not PYCAW_AVAILABLE:
@@ -31,34 +65,34 @@ def set_volume(level_percent):
         devices = AudioUtilities.GetSpeakers()
         interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
         volume = cast(interface, POINTER(IAudioEndpointVolume))
-        # Set scalar volume (0.0 to 1.0)
+        # Chỉnh âm lượng tổng (Master Volume)
         vol_scalar = max(0.0, min(1.0, level_percent / 100.0))
         volume.SetMasterVolumeLevelScalar(vol_scalar, None)
         print(f"System volume set to {level_percent}%")
     except Exception as e:
         print(f"Failed to set volume: {e}")
 
-def play_alarm():
-    print("ALARM TRIGGERED! Playing sound...")
-    # Loop for up to 5 minutes (600 * 0.5s) unless stopped
-    for _ in range(600):
-        if stop_event.is_set():
-            print("Alarm stopped by user.")
-            break
-        winsound.Beep(2500, 500)
-        time.sleep(0.1)
-    else:
-        print("Alarm timed out after 5 minutes.")
+def stop_alarm():
+    global timer_thread
+    # Phát một âm thanh Rỗng (None) với cờ PURGE để DỪNG NGAY LẬP TỨC âm thanh đang phát
+    winsound.PlaySound(None, winsound.SND_PURGE)
+    if timer_thread is not None:
+        timer_thread.cancel()
+        timer_thread = None
+    print("Alarm stopped.")
 
 def trigger_alarm():
-    global alarm_thread
-    stop_event.clear()
-    if alarm_thread is None or not alarm_thread.is_alive():
-        alarm_thread = threading.Thread(target=play_alarm, daemon=True)
-        alarm_thread.start()
-
-def stop_alarm():
-    stop_event.set()
+    global timer_thread
+    print("ALARM TRIGGERED! Phát âm thanh cảnh báo...")
+    # Dừng âm thanh cũ (nếu có)
+    stop_alarm()
+    
+    # Phát file WAV trong RAM lặp đi lặp lại một cách không đồng bộ (Bắt buộc dùng SND_ASYNC)
+    winsound.PlaySound(ALARM_WAV_DATA, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_LOOP)
+    
+    # Hẹn giờ tự tắt sau 5 phút (300 giây) để tránh tốn pin nếu người dùng quên tắt
+    timer_thread = threading.Timer(300, stop_alarm)
+    timer_thread.start()
 
 # --- MQTT Setup ---
 def on_connect(client, userdata, flags, rc):
@@ -85,7 +119,6 @@ def on_message(client, userdata, msg):
             pass
 
 def start_mqtt():
-    # Sử dụng VERSION1 để tương thích với callback cũ
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     client.on_connect = on_connect
     client.on_message = on_message
