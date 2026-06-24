@@ -2,9 +2,17 @@ import paho.mqtt.client as mqtt
 import winsound
 import time
 import threading
-import asyncio
 import logging
-import sys
+
+# Audio volume imports
+try:
+    from ctypes import cast, POINTER
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    PYCAW_AVAILABLE = True
+except ImportError:
+    print("pycaw not found, absolute volume control will be disabled.")
+    PYCAW_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 
@@ -12,19 +20,50 @@ MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
 TOPIC = "findmylaptop/jicam/command"
 
+# Global event to stop the alarm
+stop_event = threading.Event()
+alarm_thread = None
+
+def set_volume(level_percent):
+    if not PYCAW_AVAILABLE:
+        return
+    try:
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        volume = cast(interface, POINTER(IAudioEndpointVolume))
+        # Set scalar volume (0.0 to 1.0)
+        vol_scalar = max(0.0, min(1.0, level_percent / 100.0))
+        volume.SetMasterVolumeLevelScalar(vol_scalar, None)
+        print(f"System volume set to {level_percent}%")
+    except Exception as e:
+        print(f"Failed to set volume: {e}")
+
 def play_alarm():
     print("ALARM TRIGGERED! Playing sound...")
-    for _ in range(5):
+    # Loop for up to 5 minutes (600 * 0.5s) unless stopped
+    for _ in range(600):
+        if stop_event.is_set():
+            print("Alarm stopped by user.")
+            break
         winsound.Beep(2500, 500)
         time.sleep(0.1)
+    else:
+        print("Alarm timed out after 5 minutes.")
 
 def trigger_alarm():
-    threading.Thread(target=play_alarm, daemon=True).start()
+    global alarm_thread
+    stop_event.clear()
+    if alarm_thread is None or not alarm_thread.is_alive():
+        alarm_thread = threading.Thread(target=play_alarm, daemon=True)
+        alarm_thread.start()
+
+def stop_alarm():
+    stop_event.set()
 
 # --- MQTT Setup ---
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("MQTT Connected successfully.")
+        print("MQTT Connected successfully. Ready to receive web commands.")
         client.subscribe(TOPIC)
     else:
         print(f"MQTT Failed to connect, code {rc}")
@@ -32,11 +71,21 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     payload = msg.payload.decode()
     print(f"MQTT Received: {payload}")
-    if payload.lower() == "ring":
+    
+    cmd = payload.lower()
+    if cmd == "ring":
         trigger_alarm()
+    elif cmd == "stop":
+        stop_alarm()
+    elif cmd.startswith("vol:"):
+        try:
+            vol_val = int(cmd.split(":")[1])
+            set_volume(vol_val)
+        except ValueError:
+            pass
 
 def start_mqtt():
-    # Sử dụng VERSION1 để tương thích với callback cũ và tắt warning
+    # Sử dụng VERSION1 để tương thích với callback cũ
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     client.on_connect = on_connect
     client.on_message = on_message
@@ -46,76 +95,16 @@ def start_mqtt():
     except Exception as e:
         print(f"MQTT Error: {e}")
 
-# --- BLE Setup (Optional fallback) ---
-try:
-    from bless import (
-        BlessServer,
-        BlessGATTCharacteristic,
-        GATTCharacteristicProperties,
-        GATTAttributePermissions,
-    )
-    BLE_AVAILABLE = True
-except ImportError as e:
-    print(f"BLE dependencies not fully supported ({e}).")
-    print(">>> Running in MQTT-only mode (Web Controller) <<<")
-    BLE_AVAILABLE = False
-
-if BLE_AVAILABLE:
-    SERVICE_UUID = "A07498CA-AD5B-474E-940D-16F1FBE7E8CD"
-    CHAR_UUID = "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
-
-    def read_request(characteristic: BlessGATTCharacteristic, **kwargs) -> bytearray:
-        return bytearray(b"Ready")
-
-    def write_request(characteristic: BlessGATTCharacteristic, value: bytearray, **kwargs):
-        print(f"BLE Received: {value}")
-        if value == b"ring":
-            trigger_alarm()
-
-    async def run_ble():
-        server_name = "FindMyLaptop"
-        server = BlessServer(name=server_name)
-        
-        await server.add_new_service(SERVICE_UUID)
-        await server.add_new_characteristic(
-            SERVICE_UUID,
-            CHAR_UUID,
-            (GATTCharacteristicProperties.read | GATTCharacteristicProperties.write),
-            value=bytearray(b"Ready"),
-            permissions=(GATTAttributePermissions.readable | GATTAttributePermissions.writeable),
-        )
-        
-        server.read_request_func = read_request
-        server.write_request_func = write_request
-        
-        print(f"Starting BLE Server: {server_name}")
-        await server.start()
-        print("BLE Server started. Advertising...")
-        
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await server.stop()
-else:
-    async def run_ble():
-        print("Waiting for MQTT commands indefinitely...")
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-
 def main():
+    print("--- FIND MY LAPTOP (Web Controller Mode) ---")
     # Start MQTT in a background thread
     mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
     mqtt_thread.start()
 
-    # Run BLE (or idle loop) in the main asyncio event loop
+    # Main loop (Keep process alive)
     try:
-        asyncio.run(run_ble())
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
         print("Shutting down...")
 

@@ -8,21 +8,37 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #f0f2f5; margin: 0; }
         .container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 100%; }
-        h1 { color: #333; }
+        h1 { color: #333; margin-bottom: 5px; }
         .icon { font-size: 48px; margin-bottom: 10px; }
-        button { background-color: #e74c3c; color: white; border: none; padding: 15px 32px; font-size: 20px; border-radius: 8px; cursor: pointer; transition: background 0.3s, transform 0.1s; margin-top: 20px; width: 100%; font-weight: bold; }
-        button:hover { background-color: #c0392b; }
-        button:active { transform: scale(0.98); }
-        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        .btn-ring { background-color: #e74c3c; color: white; border: none; padding: 15px 32px; font-size: 20px; border-radius: 8px; cursor: pointer; transition: background 0.3s, transform 0.1s; margin-top: 10px; width: 100%; font-weight: bold; }
+        .btn-ring:hover { background-color: #c0392b; }
+        .btn-ring:active { transform: scale(0.98); }
+        .btn-ring:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        .btn-stop { background-color: #95a5a6; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; transition: background 0.3s; margin-top: 10px; width: 100%; font-weight: bold; }
+        .btn-stop:hover { background-color: #7f8c8d; }
+        
         #status { margin-top: 15px; font-weight: bold; color: #7f8c8d; }
+        
+        .vol-control { margin-top: 25px; text-align: left; }
+        .vol-control label { font-weight: bold; color: #555; }
+        input[type=range] { width: 100%; margin-top: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="icon">💻🔊</div>
         <h1>Find My Laptop</h1>
-        <p>Click the button below to sound the alarm on your laptop.</p>
-        <button id="ringBtn" disabled>Ring Laptop</button>
+        <p>Control your laptop's alarm remotely.</p>
+        
+        <button id="ringBtn" class="btn-ring" disabled>Ring Laptop</button>
+        <button id="stopBtn" class="btn-stop" disabled>Stop Alarm</button>
+        
+        <div class="vol-control">
+            <label for="volSlider">Laptop Volume: <span id="volValue">100</span>%</label>
+            <input type="range" id="volSlider" min="0" max="100" value="100" disabled>
+        </div>
+
         <div id="status">Connecting to broker...</div>
     </div>
 
@@ -33,12 +49,17 @@
         
         const client = mqtt.connect(brokerUrl);
         const statusEl = document.getElementById('status');
-        const btn = document.getElementById('ringBtn');
+        const ringBtn = document.getElementById('ringBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const volSlider = document.getElementById('volSlider');
+        const volValue = document.getElementById('volValue');
 
         client.on('connect', function () {
-            statusEl.innerText = 'Connected! Ready to ring.';
+            statusEl.innerText = 'Connected! Ready to send commands.';
             statusEl.style.color = '#27ae60';
-            btn.disabled = false;
+            ringBtn.disabled = false;
+            stopBtn.disabled = false;
+            volSlider.disabled = false;
         });
 
         client.on('error', function (err) {
@@ -46,21 +67,48 @@
             statusEl.style.color = '#e74c3c';
         });
 
-        btn.addEventListener('click', () => {
+        ringBtn.addEventListener('click', () => {
             if (client.connected) {
-                // Publish the "ring" command to the topic
                 client.publish(topic, 'ring');
-                
                 statusEl.innerText = 'Command sent! Laptop should be ringing.';
                 statusEl.style.color = '#f39c12';
                 
-                btn.disabled = true;
+                ringBtn.disabled = true;
                 setTimeout(() => {
-                    statusEl.innerText = 'Connected! Ready to ring.';
+                    statusEl.innerText = 'Connected! Ready to send commands.';
                     statusEl.style.color = '#27ae60';
-                    btn.disabled = false;
-                }, 3000); // Prevent spamming
+                    ringBtn.disabled = false;
+                }, 2000);
             }
+        });
+
+        stopBtn.addEventListener('click', () => {
+            if (client.connected) {
+                client.publish(topic, 'stop');
+                statusEl.innerText = 'Alarm stopped.';
+                statusEl.style.color = '#2980b9';
+                
+                // reset status later
+                setTimeout(() => {
+                    statusEl.innerText = 'Connected! Ready to send commands.';
+                    statusEl.style.color = '#27ae60';
+                }, 2000);
+            }
+        });
+
+        // Send volume command when slider value is released
+        volSlider.addEventListener('change', (e) => {
+            if (client.connected) {
+                const vol = e.target.value;
+                client.publish(topic, 'vol:' + vol);
+                statusEl.innerText = 'Volume set to ' + vol + '%';
+                statusEl.style.color = '#2980b9';
+            }
+        });
+
+        // Update the label visually while dragging
+        volSlider.addEventListener('input', (e) => {
+            volValue.innerText = e.target.value;
         });
     </script>
 </body>
