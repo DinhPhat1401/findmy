@@ -34,6 +34,11 @@
         <button id="ringBtn" class="btn-ring" disabled>Ring Laptop</button>
         <button id="stopBtn" class="btn-stop" disabled>Stop Alarm</button>
         
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button id="muteBtn" class="btn-stop" style="margin-top: 0;" disabled>Mute</button>
+            <button id="unmuteBtn" class="btn-stop" style="margin-top: 0; background-color: #27ae60;" disabled>Unmute</button>
+        </div>
+        
         <div class="vol-control">
             <label for="volSlider">Laptop Volume: <span id="volValue">100</span>%</label>
             <input type="range" id="volSlider" min="0" max="100" value="100" disabled>
@@ -51,6 +56,8 @@
         const statusEl = document.getElementById('status');
         const ringBtn = document.getElementById('ringBtn');
         const stopBtn = document.getElementById('stopBtn');
+        const muteBtn = document.getElementById('muteBtn');
+        const unmuteBtn = document.getElementById('unmuteBtn');
         const volSlider = document.getElementById('volSlider');
         const volValue = document.getElementById('volValue');
 
@@ -59,6 +66,8 @@
             statusEl.style.color = '#27ae60';
             ringBtn.disabled = false;
             stopBtn.disabled = false;
+            muteBtn.disabled = false;
+            unmuteBtn.disabled = false;
             volSlider.disabled = false;
         });
 
@@ -93,6 +102,22 @@
                     statusEl.innerText = 'Connected! Ready to send commands.';
                     statusEl.style.color = '#27ae60';
                 }, 2000);
+            }
+        });
+
+        muteBtn.addEventListener('click', () => {
+            if (client.connected) {
+                client.publish(topic, 'mute');
+                statusEl.innerText = 'Laptop muted.';
+                statusEl.style.color = '#2980b9';
+            }
+        });
+
+        unmuteBtn.addEventListener('click', () => {
+            if (client.connected) {
+                client.publish(topic, 'unmute');
+                statusEl.innerText = 'Laptop unmuted.';
+                statusEl.style.color = '#27ae60';
             }
         });
 

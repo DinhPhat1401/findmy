@@ -70,6 +70,20 @@ def set_volume(level_percent):
     finally:
         CoUninitialize()
 
+def set_mute(mute_state):
+    if not PYCAW_AVAILABLE:
+        return
+    try:
+        CoInitialize()
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.EndpointVolume
+        interface.SetMute(1 if mute_state else 0, None)
+        print(f"System mute set to {mute_state}")
+    except Exception as e:
+        print(f"Failed to set mute: {e}")
+    finally:
+        CoUninitialize()
+
 def stop_alarm():
     global timer_thread
     # Phát một âm thanh Rỗng (None) với cờ PURGE để DỪNG NGAY LẬP TỨC âm thanh đang phát
@@ -84,6 +98,10 @@ def trigger_alarm():
     print("ALARM TRIGGERED! Phát âm thanh cảnh báo...")
     # Dừng âm thanh cũ (nếu có)
     stop_alarm()
+    
+    # Tự động unmute và tăng max volume khi báo động
+    set_mute(False)
+    set_volume(100)
     
     # Phát file WAV trên đĩa cứng lặp đi lặp lại một cách không đồng bộ
     winsound.PlaySound(ALARM_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
@@ -109,6 +127,10 @@ def on_message(client, userdata, msg):
         trigger_alarm()
     elif cmd == "stop":
         stop_alarm()
+    elif cmd == "mute":
+        set_mute(True)
+    elif cmd == "unmute":
+        set_mute(False)
     elif cmd.startswith("vol:"):
         try:
             vol_val = int(cmd.split(":")[1])
